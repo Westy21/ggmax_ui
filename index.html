@@ -1,0 +1,1122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>
+      AI Liquid — WebSocket PCM16 → AudioWorklet (Ultra-Low Latency)
+    </title>
+    <style>
+      :root {
+        --size: min(46vmin, 560px);
+        --accent: rgba(120, 190, 255, 0.95);
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family:
+          Inter,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Helvetica,
+          Arial;
+        background: linear-gradient(180deg, #020417 0%, #0b1220 60%);
+        display: grid;
+        place-items: center;
+        color: #fff;
+      }
+
+      .stage {
+        width: 100%;
+        max-width: 1200px;
+        height: 100vh;
+        display: grid;
+        place-items: center;
+        position: relative;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+
+      .panel {
+        position: relative;
+        width: var(--size);
+        height: var(--size);
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        border-radius: 50%;
+        filter: drop-shadow(0 14px 40px rgba(0, 0, 0, 0.6));
+        touch-action: none;
+      }
+
+      .glass-frame {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        pointer-events: none;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.02),
+          rgba(255, 255, 255, 0.01)
+        );
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          0 18px 40px rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        backdrop-filter: blur(8px) saturate(120%);
+        -webkit-backdrop-filter: blur(8px) saturate(120%);
+      }
+
+      .controls-wrap {
+        position: absolute;
+        right: -360px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 360px;
+      }
+
+      .controls {
+        padding: 12px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.03),
+          rgba(255, 255, 255, 0.02)
+        );
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+      }
+
+      .controls h4 {
+        margin: 0 0 8px 0;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .controls label {
+        display: block;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+
+      .controls input[type="range"] {
+        width: 100%;
+      }
+
+      .dropdown-toggle {
+        display: block;
+        width: 100%;
+        padding: 8px;
+        border-radius: 8px;
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        cursor: pointer;
+        text-align: left;
+        font-size: 14px;
+      }
+
+      .status {
+        font-size: 12px;
+        margin-top: 10px;
+        opacity: 0.95;
+      }
+
+      .connect-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .connect-row input {
+        flex: 1;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.02);
+        color: #fff;
+      }
+
+      .connect-row button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 0;
+        background: var(--accent);
+        color: #022;
+      }
+
+      .hint {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 18px;
+        font-size: 13px;
+        opacity: 0.78;
+      }
+
+      @media (max-width: 900px) {
+        .controls-wrap {
+          position: static;
+          transform: none;
+          margin-top: 18px;
+          right: auto;
+        }
+
+        .panel {
+          margin-top: 28px;
+        }
+      }
+
+      pre.log {
+        margin: 8px 0 0;
+        font-size: 11px;
+        max-height: 140px;
+        overflow: auto;
+        background: rgba(0, 0, 0, 0.25);
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.03);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="stage">
+      <div class="panel" role="application" aria-label="AI Liquid Interface">
+        <canvas id="c" aria-hidden="false"></canvas>
+        <div class="glass-frame" aria-hidden="true"></div>
+      </div>
+
+      <div class="controls-wrap" aria-hidden="false">
+        <div class="controls">
+          <button id="dropdown" class="dropdown-toggle">Fluid Settings</button>
+          <div id="settings" style="display: none; margin-top: 8px">
+            <h4>Fluid Controls</h4>
+            <label
+              >Responsiveness
+              <input
+                id="resp"
+                type="range"
+                min="0"
+                max="2"
+                step="0.01"
+                value="1"
+              />
+            </label>
+            <label
+              >Damping
+              <input
+                id="damp"
+                type="range"
+                min="0.85"
+                max="0.999"
+                step="0.001"
+                value="0.92"
+              />
+            </label>
+            <label
+              >Viscosity
+              <input
+                id="visc"
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.01"
+                value="0.6"
+              />
+            </label>
+            <label
+              >Bass Sensitivity
+              <input
+                id="bassSens"
+                type="range"
+                min="0"
+                max="3"
+                step="0.01"
+                value="1.2"
+              />
+            </label>
+            <label
+              >Treble Sensitivity
+              <input
+                id="trebSens"
+                type="range"
+                min="0"
+                max="3"
+                step="0.01"
+                value="0.9"
+              />
+            </label>
+          </div>
+
+          <div class="status">
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              "
+            >
+              <div>
+                <strong>WS status:</strong>
+                <span id="wsStatus">disconnected</span>
+              </div>
+              <div style="font-size: 11px; opacity: 0.8">
+                Port: <strong>8765</strong> (default)
+              </div>
+            </div>
+
+            <div class="connect-row">
+              <input
+                id="wsUrl"
+                value="ws://localhost:8765"
+                aria-label="WebSocket URL"
+              />
+              <button id="connectBtn">Connect</button>
+            </div>
+
+            <div style="margin-top: 8px; font-size: 12px; opacity: 0.9">
+              Queue (est.): <strong><span id="qMs">0</span> ms</strong> · Dev
+              console logs details.
+            </div>
+            <pre id="miniLog" class="log" aria-hidden="false"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint">
+        Click & drag the circle (user gesture for AudioContext). Connect to
+        attach the backend WS.
+      </div>
+    </div>
+
+    <script>
+      (() => {
+        // ---------- UI LOGGER ----------
+        const miniLogEl = document.getElementById("miniLog");
+        function ulog(...args) {
+          console.log("[UI]", ...args);
+          try {
+            const txt = args
+              .map((a) =>
+                typeof a === "object" ? JSON.stringify(a) : String(a),
+              )
+              .join(" ");
+            miniLogEl.textContent =
+              (miniLogEl.textContent ? miniLogEl.textContent + "\n" : "") +
+              `${new Date().toLocaleTimeString()} ${txt}`;
+            if (miniLogEl.textContent.length > 12000)
+              miniLogEl.textContent = miniLogEl.textContent.slice(-12000);
+            miniLogEl.scrollTop = miniLogEl.scrollHeight;
+          } catch (e) {
+            console.warn("ulog error", e);
+          }
+        }
+
+        // ---------- CANVAS / LIQUID ----------
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d", { alpha: true });
+        let W, H, cx, cy, radiusBase;
+        function resize() {
+          const rect = canvas.getBoundingClientRect();
+          canvas.width = Math.round(rect.width * devicePixelRatio);
+          canvas.height = Math.round(rect.height * devicePixelRatio);
+          ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+          W = rect.width;
+          H = rect.height;
+          cx = W / 2;
+          cy = H / 2;
+          radiusBase = (Math.min(W, H) / 2) * 0.86;
+        }
+        window.addEventListener("resize", resize);
+        resize();
+
+        const segments = 64;
+        const points = [];
+        class P {
+          constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.px = x;
+            this.py = y;
+            this.ax = 0;
+            this.ay = 0;
+            this.phase = Math.random() * Math.PI * 2;
+          }
+          applyForce(fx, fy) {
+            this.ax += fx;
+            this.ay += fy;
+          }
+          integrate(damp) {
+            const nx = this.x + (this.x - this.px) * damp + this.ax;
+            const ny = this.y + (this.y - this.py) * damp + this.ay;
+            this.px = this.x;
+            this.py = this.y;
+            this.x = nx;
+            this.y = ny;
+            this.ax = 0;
+            this.ay = 0;
+          }
+        }
+        function initPoints() {
+          points.length = 0;
+          for (let i = 0; i < segments; i++) {
+            const a = (i / segments) * Math.PI * 2;
+            const x = cx + Math.cos(a) * radiusBase;
+            const y = cy + Math.sin(a) * radiusBase;
+            points.push(new P(x, y));
+          }
+        }
+
+        function solveConstraints(iter = 6, targetArea = null) {
+          const rest = (2 * Math.PI * radiusBase) / segments;
+          for (let k = 0; k < iter; k++) {
+            for (let i = 0; i < segments; i++) {
+              const a = points[i],
+                b = points[(i + 1) % segments];
+              let dx = b.x - a.x,
+                dy = b.y - a.y;
+              let d = Math.hypot(dx, dy) || 1e-6;
+              const diff = ((d - rest) / d) * 0.5,
+                ox = dx * diff,
+                oy = dy * diff;
+              b.x -= ox;
+              b.y -= oy;
+              a.x += ox;
+              a.y += oy;
+            }
+            if (targetArea) {
+              let area = 0,
+                cxp = 0,
+                cyp = 0;
+              for (let i = 0; i < segments; i++) {
+                const p = points[i],
+                  q = points[(i + 1) % segments];
+                area += p.x * q.y - q.x * p.y;
+                cxp += (p.x + q.x) * (p.x * q.y - q.x * p.y);
+                cyp += (p.y + q.y) * (p.x * q.y - q.x * p.y);
+              }
+              area = Math.abs(area) * 0.5;
+              if (area <= 1) continue;
+              const cx0 = cxp / (6 * area),
+                cy0 = cyp / (6 * area),
+                scale = Math.sqrt(targetArea / area),
+                strength = 0.22;
+              for (let i = 0; i < segments; i++) {
+                const p = points[i];
+                p.x = cx0 + (p.x - cx0) * (1 + (scale - 1) * strength);
+                p.y = cy0 + (p.y - cy0) * (1 + (scale - 1) * strength);
+              }
+            }
+          }
+        }
+
+        function drawShape(t, ap) {
+          ctx.clearRect(0, 0, W, H);
+
+          // blurred shadow
+          ctx.save();
+          ctx.beginPath();
+          for (let i = 0; i < segments; i++) {
+            const curr = points[i],
+              next = points[(i + 1) % segments];
+            const mx = (curr.x + next.x) / 2,
+              my = (curr.y + next.y) / 2;
+            if (i === 0) ctx.moveTo(mx, my);
+            else ctx.quadraticCurveTo(curr.x, curr.y, mx, my);
+          }
+          ctx.closePath();
+          ctx.filter = "blur(20px)";
+          ctx.fillStyle = "rgba(8,14,26,0.62)";
+          ctx.fill();
+          ctx.restore();
+
+          // gradient main
+          const grad = ctx.createRadialGradient(
+            cx - radiusBase * 0.22,
+            cy - radiusBase * 0.22,
+            radiusBase * 0.08,
+            cx,
+            cy,
+            radiusBase * 1.12,
+          );
+          grad.addColorStop(0, "rgba(255,255,255,0.92)");
+          grad.addColorStop(0.12, "rgba(180,220,255,0.85)");
+          grad.addColorStop(0.26, "rgba(120,180,255,0.55)");
+          grad.addColorStop(1, "rgba(16,28,44,0.56)");
+
+          ctx.beginPath();
+          for (let i = 0; i < segments; i++) {
+            const curr = points[i],
+              next = points[(i + 1) % segments];
+            const mx = (curr.x + next.x) / 2,
+              my = (curr.y + next.y) / 2;
+            if (i === 0) ctx.moveTo(mx, my);
+            else ctx.quadraticCurveTo(curr.x, curr.y, mx, my);
+          }
+          ctx.closePath();
+          ctx.save();
+          ctx.fillStyle = grad;
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fill();
+          ctx.restore();
+
+          // inner highlights
+          ctx.save();
+          ctx.beginPath();
+          for (let i = 0; i < segments; i++) {
+            const curr = points[i],
+              next = points[(i + 1) % segments];
+            const mx = (curr.x + next.x) / 2,
+              my = (curr.y + next.y) / 2;
+            if (i === 0) ctx.moveTo(mx, my);
+            else ctx.quadraticCurveTo(curr.x, curr.y, mx, my);
+          }
+          ctx.closePath();
+          ctx.clip();
+
+          const highlight = ctx.createLinearGradient(
+            0,
+            cy - radiusBase,
+            W,
+            cy + radiusBase * 0.6,
+          );
+          highlight.addColorStop(0, "rgba(255,255,255,0.36)");
+          highlight.addColorStop(0.18, "rgba(255,255,255,0.06)");
+          highlight.addColorStop(0.45, "rgba(255,255,255,0.02)");
+          highlight.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = highlight;
+          ctx.fillRect(-W, -H, W * 2, H * 2);
+
+          const coreR =
+            radiusBase * (0.18 + 0.7 * Math.min(1, ap.bass * ap.bassSens));
+          ctx.globalCompositeOperation = "screen";
+          ctx.beginPath();
+          ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(90,170,255,${
+            0.08 + 0.25 * Math.min(1, ap.treble * ap.trebSens)
+          })`;
+          ctx.fill();
+          ctx.restore();
+
+          // outline & specular
+          ctx.beginPath();
+          for (let i = 0; i < segments; i++) {
+            const curr = points[i],
+              next = points[(i + 1) % segments];
+            const mx = (curr.x + next.x) / 2,
+              my = (curr.y + next.y) / 2;
+            if (i === 0) ctx.moveTo(mx, my);
+            else ctx.quadraticCurveTo(curr.x, curr.y, mx, my);
+          }
+          ctx.closePath();
+          ctx.lineWidth = 2.2;
+          ctx.strokeStyle = "rgba(255,255,255,0.06)";
+          ctx.stroke();
+
+          const specAlpha = 0.12 + 0.28 * Math.min(1, ap.treble * ap.trebSens);
+          ctx.beginPath();
+          ctx.ellipse(
+            cx - radiusBase * 0.32,
+            cy - radiusBase * 0.36,
+            radiusBase * 0.16,
+            radiusBase * 0.08,
+            -0.45,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fillStyle = `rgba(255,255,255,${specAlpha})`;
+          ctx.fill();
+        }
+
+        // ---------- POINTER (resume AudioContext) ----------
+        let isDown = false,
+          lastX = 0,
+          lastY = 0;
+        canvas.addEventListener("pointerdown", (e) => {
+          isDown = true;
+          const r = canvas.getBoundingClientRect();
+          lastX = e.clientX - r.left;
+          lastY = e.clientY - r.top;
+          canvas.setPointerCapture(e.pointerId);
+          if (window.audioCtx && window.audioCtx.state === "suspended") {
+            window.audioCtx
+              .resume()
+              .then(() => ulog("AudioContext resumed via gesture"))
+              .catch(() => ulog("AudioContext resume blocked"));
+          }
+        });
+        canvas.addEventListener("pointerup", (e) => {
+          isDown = false;
+          try {
+            canvas.releasePointerCapture(e.pointerId);
+          } catch (e) {}
+        });
+        canvas.addEventListener("pointermove", (e) => {
+          if (!isDown) return;
+          const r = canvas.getBoundingClientRect();
+          const mx = e.clientX - r.left,
+            my = e.clientY - r.top;
+          const dx = mx - lastX,
+            dy = my - lastY;
+          lastX = mx;
+          lastY = my;
+          for (let p of points) {
+            const dd = Math.hypot(p.x - mx, p.y - my);
+            if (dd < radiusBase * 0.75) {
+              const f = (1 - dd / (radiusBase * 0.75)) * 0.45;
+              p.applyForce(dx * f, dy * f);
+            }
+          }
+        });
+
+        // ---------- AUDIO GRAPH (Worklet + ScriptProcessor fallback) ----------
+        window.audioCtx = null;
+        window.analyser = null;
+        window._silentGain = null;
+
+        let pcmNode = null; // AudioWorkletNode when available
+        let pcmMode = "none"; // 'worklet' | 'scriptproc' | 'none'
+        let scriptNode = null; // ScriptProcessorNode fallback
+        let scriptQueue = null; // Float32Array queue for fallback
+        let scriptReadIndex = 0;
+        let scriptFrameCounter = 0;
+        const SCRIPT_REPORT_INTERVAL = 16; // report latency every N callbacks
+        const qMsEl = document.getElementById("qMs");
+        let reportedQms = 0;
+
+        async function ensureAudioGraph(
+          fft = 2048,
+          opts = { sampleRate: 16000, channels: 1 },
+        ) {
+          // create base graph (analyser + silent gain)
+          if (!window.audioCtx) {
+            window.audioCtx = new (window.AudioContext ||
+              window.webkitAudioContext)();
+            ulog(
+              "Created AudioContext, sampleRate: " + window.audioCtx.sampleRate,
+            );
+          }
+
+          // analyzer: more responsive settings
+          if (!window.analyser) {
+            window.analyser = window.audioCtx.createAnalyser();
+            window.analyser.fftSize = fft;
+            window.analyser.smoothingTimeConstant = 0.25; // make responsive
+            window.analyser.minDecibels = -90;
+            window.analyser.maxDecibels = -10;
+          }
+
+          if (!window._silentGain) {
+            window._silentGain = window.audioCtx.createGain();
+            window._silentGain.gain.value = 0.0;
+            try {
+              window.analyser.connect(window._silentGain);
+              window._silentGain.connect(window.audioCtx.destination);
+            } catch (e) {
+              console.warn("Silent gain connection failed:", e);
+            }
+          }
+
+          // If already initialized (worklet or fallback), nothing to do
+          if (pcmMode !== "none") return;
+
+          // Prefer AudioWorklet if available
+          if (window.audioCtx.audioWorklet) {
+            try {
+              // Inline worklet source
+              const workletCode = `
+          class PCM16MonoProcessor extends AudioWorkletProcessor {
+            constructor(){
+              super();
+              this.queue = new Int16Array(0);
+              this.readIndex = 0;
+              this.sampleRateIn = 16000;
+              this.framesSinceReport = 0;
+              this.reportInterval = ${SCRIPT_REPORT_INTERVAL};
+              this.port.onmessage = (e) => {
+                const msg = e.data;
+                if (msg && msg.type === 'config') { if (msg.sampleRate) this.sampleRateIn = msg.sampleRate|0; return; }
+                // Expect raw ArrayBuffer containing PCM16 LE mono samples
+                const buf = new Int16Array(msg);
+                if (this.readIndex >= this.queue.length) {
+                  this.queue = buf; this.readIndex = 0;
+                } else {
+                  const remaining = this.queue.length - this.readIndex;
+                  const newQ = new Int16Array(remaining + buf.length);
+                  newQ.set(this.queue.subarray(this.readIndex));
+                  newQ.set(buf, remaining);
+                  this.queue = newQ;
+                  this.readIndex = 0;
+                }
+              };
+            }
+            process(inputs, outputs){
+              const out = outputs[0];
+              const ch0 = out[0];
+              const frames = ch0.length;
+              let available = this.queue.length - this.readIndex;
+              const take = available >= frames ? frames : available;
+              for (let i = 0; i < take; i++) {
+                const s = this.queue[this.readIndex++];
+                ch0[i] = Math.max(-1, Math.min(1, s / 32768));
+              }
+              for (let i = take; i < frames; i++) ch0[i] = 0;
+              if (++this.framesSinceReport >= this.reportInterval) {
+                this.framesSinceReport = 0;
+                const remaining = (this.queue.length - this.readIndex);
+                const ms = this.sampleRateIn > 0 ? (remaining / this.sampleRateIn) * 1000 : 0;
+                this.port.postMessage({ type: 'q', ms });
+              }
+              return true;
+            }
+          }
+          registerProcessor('pcm16-mono', PCM16MonoProcessor);
+        `;
+              const blob = new Blob([workletCode], {
+                type: "application/javascript",
+              });
+              const url = URL.createObjectURL(blob);
+              try {
+                // addModule may reject for many reasons (CSP, unsupported browser). Wrap in try/catch.
+                await window.audioCtx.audioWorklet.addModule(url);
+                ulog("AudioWorklet module loaded successfully");
+              } finally {
+                // revoke after attempt (keeps us safe if addModule threw)
+                URL.revokeObjectURL(url);
+              }
+
+              pcmNode = new AudioWorkletNode(window.audioCtx, "pcm16-mono", {
+                numberOfInputs: 0,
+                numberOfOutputs: 1,
+                outputChannelCount: [1],
+              });
+
+              // wire to analyser
+              pcmNode.connect(window.analyser);
+
+              // receive queue-depth updates
+              pcmNode.port.onmessage = (e) => {
+                const msg = e.data;
+                if (msg && msg.type === "q") {
+                  reportedQms = Math.max(0, Math.round(msg.ms));
+                  if (qMsEl) qMsEl.textContent = String(reportedQms);
+                  if (reportedQms > 300)
+                    ulog("Worklet queue high (ms): " + reportedQms);
+                }
+              };
+
+              pcmMode = "worklet";
+              ulog("AudioWorklet initialized (pcm16-mono). Mode=worklet");
+              return;
+            } catch (err) {
+              console.warn(
+                "AudioWorklet initialization failed, falling back to ScriptProcessor:",
+                err,
+              );
+              ulog(
+                "AudioWorklet failed — falling back to ScriptProcessorNode. Error: " +
+                  String(err),
+              );
+              // fall through to ScriptProcessor fallback
+            }
+          } else {
+            ulog(
+              "AudioWorklet not supported — using ScriptProcessor fallback.",
+            );
+          }
+
+          // SCRIPT PROCESSOR FALLBACK
+          initScriptProcessor(opts);
+        }
+
+        function initScriptProcessor(opts = { sampleRate: 16000 }) {
+          if (!window.audioCtx) {
+            window.audioCtx = new (window.AudioContext ||
+              window.webkitAudioContext)();
+          }
+
+          const bufferSize = 2048;
+          scriptNode = window.audioCtx.createScriptProcessor(bufferSize, 0, 1);
+
+          scriptQueue = new Float32Array(0);
+          scriptReadIndex = 0;
+          scriptFrameCounter = 0;
+
+          scriptNode.onaudioprocess = (e) => {
+            const out = e.outputBuffer.getChannelData(0);
+            const frames = out.length;
+            const available = scriptQueue.length - scriptReadIndex;
+            const take = available >= frames ? frames : available;
+
+            for (let i = 0; i < take; i++)
+              out[i] = scriptQueue[scriptReadIndex++];
+            for (let i = take; i < frames; i++) out[i] = 0;
+
+            // compact occasionally
+            if (scriptReadIndex > 8192) {
+              const unread = scriptQueue.subarray(scriptReadIndex);
+              scriptQueue = new Float32Array(unread.length);
+              scriptQueue.set(unread);
+              scriptReadIndex = 0;
+            }
+
+            if (++scriptFrameCounter >= SCRIPT_REPORT_INTERVAL) {
+              scriptFrameCounter = 0;
+              const remaining = Math.max(
+                0,
+                scriptQueue.length - scriptReadIndex,
+              );
+              const ms = opts.sampleRate
+                ? (remaining / opts.sampleRate) * 1000
+                : 0;
+              reportedQms = Math.round(ms);
+              if (qMsEl) qMsEl.textContent = String(reportedQms);
+            }
+          };
+
+          // connect to analyser -> silent gain path
+          try {
+            scriptNode.connect(window.analyser);
+            pcmMode = "scriptproc";
+            ulog(
+              "ScriptProcessor fallback initialized (pcm path). Mode=scriptproc",
+            );
+          } catch (e) {
+            console.warn("ScriptProcessor connect failed", e);
+          }
+        }
+
+        // enqueue 16-bit PCM into scriptQueue (fallback)
+        function enqueuePCM16ToScript(arrayBuffer) {
+          const int16 = new Int16Array(arrayBuffer);
+          const f32 = new Float32Array(int16.length);
+          for (let i = 0; i < int16.length; i++)
+            f32[i] = Math.max(-1, Math.min(1, int16[i] / 32768));
+          if (scriptReadIndex >= (scriptQueue ? scriptQueue.length : 0)) {
+            scriptQueue = f32;
+            scriptReadIndex = 0;
+          } else {
+            const remaining = scriptQueue.length - scriptReadIndex;
+            const newQ = new Float32Array(remaining + f32.length);
+            newQ.set(scriptQueue.subarray(scriptReadIndex));
+            newQ.set(f32, remaining);
+            scriptQueue = newQ;
+            scriptReadIndex = 0;
+          }
+        }
+
+        // ---------- computeBands() with RMS fallback ----------
+        function computeBands() {
+          if (!window.analyser || !window.audioCtx)
+            return { bass: 0, mid: 0, treble: 0 };
+
+          const fd = new Uint8Array(window.analyser.frequencyBinCount);
+          window.analyser.getByteFrequencyData(fd);
+
+          // quick check for almost-empty bins
+          let maxBin = 0;
+          for (let i = 0; i < fd.length; i++)
+            if (fd[i] > maxBin) maxBin = fd[i];
+
+          // if frequency bins are essentially empty, use time-domain RMS fallback
+          if (maxBin < 2) {
+            const td = new Uint8Array(window.analyser.fftSize);
+            window.analyser.getByteTimeDomainData(td);
+            let sum = 0;
+            for (let i = 0; i < td.length; i++) {
+              const v = (td[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / td.length);
+            const bass = Math.min(1, rms * 6.0);
+            return {
+              bass: bass,
+              mid: bass * 0.6,
+              treble: Math.max(0, bass * 0.25),
+            };
+          }
+
+          // frequency-band energy path
+          const sr = window.audioCtx.sampleRate;
+          const binSize = sr / window.analyser.fftSize;
+          function energy(range) {
+            const start = Math.floor(range[0] / binSize),
+              end = Math.ceil(range[1] / binSize);
+            let sum = 0,
+              count = 0;
+            for (let i = start; i <= end && i < fd.length; i++) {
+              sum += fd[i];
+              count++;
+            }
+            return count > 0 ? sum / (count * 255) : 0;
+          }
+          return {
+            bass: energy([20, 250]),
+            mid: energy([250, 4000]),
+            treble: energy([4000, Math.min(20000, sr / 2)]),
+          };
+        }
+
+        // ---------- WebSocket wiring ----------
+        window.connectAudioWebSocket = async function (
+          url = "ws://localhost:8765",
+          opts = { sampleRate: 16000, channels: 1 },
+        ) {
+          await ensureAudioGraph(2048, opts);
+
+          if (window.audioCtx && window.audioCtx.state === "suspended") {
+            try {
+              await window.audioCtx.resume();
+              ulog("AudioContext resumed on connect");
+            } catch (e) {
+              ulog("audioCtx resume blocked");
+            }
+          }
+
+          const statusEl = document.getElementById("wsStatus");
+          const ws = new WebSocket(url);
+          ws.binaryType = "arraybuffer";
+
+          let msgCount = 0;
+          ws.addEventListener("open", () => {
+            ulog("[WS] open " + url + " (mode=" + pcmMode + ")");
+            if (statusEl) statusEl.textContent = "open";
+            if (pcmMode === "worklet" && pcmNode && pcmNode.port) {
+              try {
+                pcmNode.port.postMessage({
+                  type: "config",
+                  sampleRate: opts.sampleRate | 0,
+                });
+              } catch (e) {}
+            }
+          });
+
+          ws.addEventListener("close", (ev) => {
+            ulog("[WS] closed", ev.code, ev.reason || "");
+            if (statusEl) statusEl.textContent = "closed";
+          });
+
+          ws.addEventListener("error", (err) => {
+            ulog("[WS] error: " + String(err));
+            if (statusEl) statusEl.textContent = "error";
+            console.error("[WS] error", err);
+          });
+
+          ws.onmessage = async (event) => {
+            try {
+              const raw =
+                event.data instanceof Blob
+                  ? await event.data.arrayBuffer()
+                  : event.data;
+              msgCount++;
+              if (msgCount <= 6)
+                console.debug(
+                  "[WS] msg#" + msgCount + " bytes=" + raw.byteLength,
+                );
+
+              if (pcmMode === "worklet" && pcmNode && pcmNode.port) {
+                try {
+                  pcmNode.port.postMessage(raw, [raw]); // zero-copy transfer
+                  ulog(
+                    `[WS] -> worklet ${raw.byteLength} bytes (msg#${msgCount})`,
+                  );
+                } catch (postErr) {
+                  console.warn(
+                    "Worklet postMessage failed, falling back to enqueue",
+                    postErr,
+                  );
+                  enqueuePCM16ToScript(raw.slice(0));
+                  ulog(`[WS] -> enqueue (fallback) ${raw.byteLength} bytes`);
+                }
+              } else {
+                enqueuePCM16ToScript(raw);
+                ulog(
+                  `[WS] -> script-queue ${raw.byteLength} bytes (msg#${msgCount})`,
+                );
+              }
+            } catch (e) {
+              console.error("[WS] onmessage error", e);
+              ulog("[WS] onmessage error: " + String(e));
+            }
+          };
+
+          return ws;
+        };
+
+        // ---------- UI Connect wiring ----------
+        const connectBtn = document.getElementById("connectBtn");
+        const wsUrlInput = document.getElementById("wsUrl");
+        let currentWS = null;
+        connectBtn.addEventListener("click", async () => {
+          const url = wsUrlInput.value.trim();
+          if (!url) return ulog("No URL provided");
+          if (currentWS && currentWS.readyState === WebSocket.OPEN) {
+            try {
+              currentWS.close();
+            } catch (e) {}
+          }
+          try {
+            currentWS = await window.connectAudioWebSocket(url, {
+              sampleRate: 16000,
+              channels: 1,
+            });
+            ulog("connectAudioWebSocket established");
+          } catch (err) {
+            console.error("connect failed", err);
+            ulog("connect failed:", String(err));
+          }
+        });
+
+        // ---------- Animation loop ----------
+        const audioState = {
+          level: 0,
+          smoothed: 0,
+          bass: 0,
+          mid: 0,
+          treble: 0,
+          bassSens: 1.2,
+          trebSens: 0.9,
+        };
+        let t = 0,
+          last = performance.now();
+        const controls = { responsiveness: 1, damping: 0.92, viscosity: 0.6 };
+
+        function step(now) {
+          const dt = Math.min(30, now - last) / 1000;
+          last = now;
+          t += dt;
+
+          controls.responsiveness = parseFloat(
+            document.getElementById("resp").value,
+          );
+          controls.damping = parseFloat(document.getElementById("damp").value);
+          controls.viscosity = parseFloat(
+            document.getElementById("visc").value,
+          );
+          audioState.bassSens = parseFloat(
+            document.getElementById("bassSens").value,
+          );
+          audioState.trebSens = parseFloat(
+            document.getElementById("trebSens").value,
+          );
+
+          // Diagnostic RMS check (occasional debug)
+          if (window.analyser && window.audioCtx) {
+            const td = new Uint8Array(window.analyser.fftSize);
+            window.analyser.getByteTimeDomainData(td);
+            let sum = 0;
+            for (let i = 0; i < td.length; i++) {
+              const v = (td[i] - 128) / 128;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / td.length);
+            if (Math.random() < 0.01)
+              console.debug(
+                "[DIAG] analyser RMS=",
+                rms.toFixed(5),
+                "qMs=",
+                reportedQms,
+                "mode=",
+                pcmMode,
+              );
+          }
+
+          if (window.analyser && window.audioCtx) {
+            const b = computeBands();
+            audioState.bass = audioState.bass * 0.86 + b.bass * 0.14;
+            audioState.mid = audioState.mid * 0.86 + b.mid * 0.14;
+            audioState.treble = audioState.treble * 0.86 + b.treble * 0.14;
+            audioState.level =
+              (audioState.bass + audioState.mid + audioState.treble) / 3;
+            audioState.smoothed =
+              audioState.smoothed * 0.9 + audioState.level * 0.1;
+          } else {
+            audioState.level *= 0.95;
+            audioState.smoothed *= 0.96;
+            audioState.bass *= 0.95;
+            audioState.mid *= 0.95;
+            audioState.treble *= 0.95;
+          }
+
+          const audioForce =
+            Math.min(1, audioState.smoothed * 6) * controls.responsiveness;
+          for (let i = 0; i < segments; i++) {
+            const p = points[i];
+            const angle = (i / segments) * Math.PI * 2 + t * 0.7 + p.phase;
+            const wave =
+              Math.sin(angle) *
+              0.4 *
+              controls.viscosity *
+              (0.6 + audioState.mid * 1.2);
+            const dx = p.x - cx,
+              dy = p.y - cy,
+              dist = Math.hypot(dx, dy) || 1,
+              nx = dx / dist,
+              ny = dy / dist;
+            p.applyForce(
+              nx *
+                audioForce *
+                (0.75 + wave) *
+                (0.6 + audioState.bass * audioState.bassSens),
+              ny *
+                audioForce *
+                (0.75 + wave) *
+                (0.6 + audioState.bass * audioState.bassSens),
+            );
+            const tang = -ny * 0.1 * audioState.treble * audioState.trebSens;
+            p.applyForce(
+              tang,
+              nx * 0.1 * audioState.treble * audioState.trebSens,
+            );
+            const desired = radiusBase,
+              delta = dist - desired;
+            p.applyForce(-nx * delta * 0.008, -ny * delta * 0.008);
+            p.integrate(controls.damping);
+          }
+
+          const targetArea = Math.PI * radiusBase * radiusBase;
+          solveConstraints(6, targetArea);
+          drawShape(t, {
+            bass: audioState.bass,
+            mid: audioState.mid,
+            treble: audioState.treble,
+            bassSens: audioState.bassSens,
+            trebSens: audioState.trebSens,
+          });
+
+          requestAnimationFrame(step);
+        }
+
+        function start() {
+          resize();
+          initPoints();
+          requestAnimationFrame(step);
+        }
+        start();
+
+        // ---------- Dropdown ----------
+        const dropdownBtn = document.getElementById("dropdown");
+        if (dropdownBtn)
+          dropdownBtn.addEventListener("click", () => {
+            const s = document.getElementById("settings");
+            s.style.display = s.style.display === "none" ? "block" : "none";
+          });
+
+        ulog(
+          "Frontend JS loaded. Click the circle (gesture) and press Connect. Open DevTools for logs.",
+        );
+      })();
+    </script>
+  </body>
+</html>
